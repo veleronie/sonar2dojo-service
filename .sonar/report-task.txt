@@ -1,0 +1,6 @@
+projectKey=pipeline-project4_mobile_android_5baf3c80-c25d-4b4d-9f92-a6b04d232749
+serverUrl=http://localhost:9000
+serverVersion=26.2.0.119303
+dashboardUrl=http://localhost:9000/dashboard?id=pipeline-project4_mobile_android_5baf3c80-c25d-4b4d-9f92-a6b04d232749
+ceTaskId=65bb2e5b-1c89-44b4-868c-985013e42e02
+ceTaskUrl=http://localhost:9000/api/ce/task?id=65bb2e5b-1c89-44b4-868c-985013e42e02
