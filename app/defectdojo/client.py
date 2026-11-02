@@ -13,23 +13,49 @@ class DefectDojoClient:
             return GIT_DOMAIN.rstrip("/")
         return f"https://{GIT_DOMAIN}"
 
-    def _replace_locations(self, report: dict, project: str, branch: str) -> dict:
+    def _replace_locations(self, report: dict, project_key: str, branch: str) -> dict:
         """
-        Заменяет локальные пути на URL-ы в GitLab/GitHub.
+        Формирует прямую ссылку на уязвимость в SonarQube.
+
+        Используем собственный URL SonarQube, который ведёт на конкретный
+        файл, строку и проект, а не на GitLab/GitHub. Приоритет отдаём ключу
+        инцидента (permalink вида project/issues?id=...&open=...), в противном
+        случае строим ссылку на просмотр кода в ветке.
         """
-        base_url = f"{self._git_base()}/{project}/-/blob/{branch}"
-        # Теперь ищем внутри 'findings'
+        from app.settings import SONAR_URL
+
+        sonar_base = (SONAR_URL or "").rstrip("/")
+
+        # Внутри data находятся 'findings'
         for finding in report.get("findings", []):
             file_path = finding.get("file_path")
-            if not file_path or file_path.startswith("http"):
-                continue
             line = finding.get("line", 1)
-            finding["file_path"] = f"{base_url}/{file_path}#L{line}"
+            issue_key = finding.get("sonar_issue_key")
+
+            if issue_key:
+                # Прямая ссылка на конкретный инцидент (файл + строка + проект)
+                location_url = (
+                    f"{sonar_base}/project/issues"
+                    f"?id={project_key}&open={issue_key}"
+                )
+            elif file_path and not file_path.startswith("http"):
+                # Фолбэк: просмотр кода в ветке, на конкретной строке
+                location_url = (
+                    f"{sonar_base}/code"
+                    f"?id={project_key}&branch={branch}"
+                    f"&selected={project_key}:{file_path}&line={line}"
+                )
+            else:
+                continue
+
+            finding["file_path"] = location_url
+
         return report
+
 
     async def import_scan(self, payload: dict):
         # Обрабатываем секцию findings
-        report_data = self._replace_locations(payload["file"], payload["product_name"], payload.get("branch_tag", "main"))
+        report_data = self._replace_locations(payload["file"], payload.get("sonar_project_key", ""), payload.get("branch_tag", "main"))
 
         data = {
             "scan_type": payload["scan_type"],

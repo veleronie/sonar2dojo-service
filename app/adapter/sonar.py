@@ -4,7 +4,7 @@ class SonarAdapter:
     # Используем Generic тип, чтобы DD не пытался применять свои хрупкие парсеры
     scan_type = "Generic Findings Import"
 
-    def normalize(self, sonar_issues: list, properties: dict):
+    def normalize(self, sonar_issues: list, properties: dict, project_key: str = ""):
 
         project_path = properties.get("sonar.analysis.project_path", "unknown")
         branch = properties.get("sonar.analysis.branch", "main")
@@ -29,6 +29,8 @@ class SonarAdapter:
             clean_title = raw_message.replace('"', '').replace("'", "")
             component = issue.get("component", "")
             path = component.split(":", 1)[-1] if ":" in component else component
+            # Ключ инцидента в SonarQube нужен для прямой ссылки на файл/строку
+            issue_key = issue.get("key", "")
             
             # Извлекаем CWE если он есть в правиле (например, "python:S4830")
             cwe = None
@@ -46,12 +48,13 @@ class SonarAdapter:
                 "title": clean_title,
                 "date": "2026-02-11",  # DD требует дату в Generic формате
                 "severity": severity_map.get(issue.get("severity"), "Info"),
-                "description": f"**Rule:** {rule_id}\n**Sonar Message:** {issue.get('message')}",
+                "description": self._build_description(rule_id, issue),
                 "file_path": path,
                 "line": issue.get("line", 1),
                 "active": True,
                 "verified": False,
-                "cwe": cwe
+                "cwe": cwe,
+                "sonar_issue_key": issue_key,
             })
 
         payload = {
@@ -61,6 +64,7 @@ class SonarAdapter:
             "engagement_name": f"Sonar Scan: {branch}",
             "branch_tag": branch,
             "commit_hash": commit,
+            "sonar_project_key": project_key,
             "file": {
                 "findings": findings  # ВАЖНО: Ключ должен называться 'findings'
             },
@@ -68,3 +72,56 @@ class SonarAdapter:
 
         print(f"[SonarAdapter] Transformed {len(findings)} issues into Generic format")
         return payload
+
+    def _build_description(self, rule_id: str, issue: dict) -> str:
+        """
+        Собирает Markdown-описание находки: правило, сообщение SonarQube
+        и (при наличии) сниппет уязвимого кода.
+        """
+        parts = [
+            f"**Rule:** {rule_id}",
+            f"**Sonar Message:** {issue.get('message')}",
+        ]
+
+        snippet = self._format_code_snippet(issue)
+        if snippet:
+            parts.append(snippet)
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _format_code_snippet(issue: dict) -> str:
+        """
+        Формирует читаемый Markdown-блок с уязвимым кодом: путь, номер строки
+        и фрагмент исходного кода (с тройными обратными кавычками).
+
+        Если сниппет был получен заранее (поле _source_snippet), используем его;
+        иначе ограничиваемся ссылкой/координатами без текста кода.
+        """
+        snippet = issue.get("_source_snippet")
+        if not snippet:
+            return ""
+
+        path = snippet.get("path", "")
+        lines = snippet.get("lines", [])
+        highlight_line = issue.get("line")
+
+        if path:
+            header_parts = [f"**File:** `{path}`"]
+        else:
+            header_parts = []
+
+        if highlight_line:
+            header_parts.append(f"**Line:** {highlight_line}")
+
+        header = "  \n".join(header_parts)
+
+        # Нумеруем строки и выделяем проблемную
+        code_lines = []
+        for line_no, code in lines:
+            marker = "  <-- vulnerable line" if line_no == highlight_line else ""
+            code_lines.append(f"{line_no:>4} | {code}{marker}")
+
+        code_block = "```\n" + "\n".join(code_lines) + "\n```"
+
+        return "\n\n### Vulnerable Code\n\n" + (header + "\n\n" if header else "") + code_block

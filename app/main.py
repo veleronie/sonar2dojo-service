@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import logging
 from fastapi import FastAPI, Header, Request, HTTPException
 from app.sonarqube.client import SonarQubeClient
 from app.adapter.sonar import SonarAdapter
@@ -7,6 +8,10 @@ from app.settings import SONAR_WEBHOOK_SECRET
 from app.defectdojo.client import DefectDojoClient
 from app.storage import mark_processed, is_processed
 import json
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI()
@@ -39,6 +44,10 @@ async def sonar_webhook(
             raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
     data = await request.json()
+
+    # Логируем полный входящий JSON-пакет от SonarQube
+    logger.info("[Webhook] Incoming SonarQube payload: %s", json.dumps(data, ensure_ascii=False))
+
     if data.get("status") != "SUCCESS":
         return {"status": "ignored", "reason": "Analysis status != SUCCESS"}
 
@@ -53,7 +62,7 @@ async def sonar_webhook(
     issues = await sonar_client.get_vulnerabilities(project_key)
 
     # 4. Трансформация и отправка в DefectDojo
-    payload = sonar_adapter.normalize(issues, properties)
+    payload = sonar_adapter.normalize(issues, properties, project_key)
     await dd_client.import_scan(payload)
     
     mark_processed(storage_key)
